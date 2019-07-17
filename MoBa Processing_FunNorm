@@ -1,0 +1,163 @@
+# Load libraries
+library(limma)
+library(minfi)
+library(RColorBrewer)
+library(lumi)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+library(IlluminaHumanMethylation450kmanifest)
+
+# Set base directory
+baseDir="/home/sextonoatesa/MoBa/idat" 
+
+# Get annotation file
+ann.450k = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+
+# Read in targets file 
+baseDir2 = "/home/sextonoatesa/MoBa"
+targets = read.metharray.sheet(baseDir2, "SampleSheetMoBa_forProcessing.csv")
+
+# Create rgset
+rgset <- read.metharray.exp(targets=targets)
+targets$ID = paste(targets$RetrievalDetail_ID)
+sampleNames(rgset) = targets$ID
+
+# Generate p-detection values
+detp = detectionP(rgset)
+barplot(apply(detp,2,mean),col=as.numeric(factor(targets$Slide)),las=2,cex.names=0.8,ylim=c(0,0.05), main="P-detection plot")
+abline(h=0.01,col="red")
+# Showed two poor quality samples
+
+# Step required for boxplots during QC
+nsamp <- nrow(targets)
+
+# Check sex prediction
+GMsetEx <- mapToGenome(rgset)
+estSex <- getSex(GMsetEx)
+targets$predGender <- estSex$predictedSex
+# Showed three samples to have wrong sex (99513-poor quality, 99638 and 99635 - twins)
+
+# Get raw betas
+rawbetas<-getBeta(rgset)
+nbprobes1<-nrow(rawbetas)
+# Number of probes is 485,512
+
+#QC before processing
+jpeg(paste("boxplot_colour1.jpg",sep="/"), width=800, height=800)
+main<- "Boxplots of Red and Green color channels"
+ylab<-"log2 intensity of both methylated and unmethylated probes"
+par(xaxt='n')
+boxplot(log2(rgset@assays$data$Red+1), col = "red", boxwex = 0.25, at= 1:nsamp - 0.175, ylab=ylab, main=main, labels=sampleNames(rgset), cex=0.5)
+boxplot(log2(rgset@assays$data$Green+1), col = "green", boxwex = 0.25, at= 1:nsamp + 0.175, axis=F , add=T, cex=0.5)
+par(xaxt='s')
+axis(1, at=1:nsamp, labels=sampleNames(rgset), tick=TRUE, las=2, cex.axis=0.8)
+invisible(dev.off())
+# Shows two weird samples
+
+# QC plot
+MSet <- preprocessRaw(rgset)
+qc <- getQC(MSet)
+jpeg(paste("plotQC.jpg",sep="/"), width=800, height=800)
+plotQC(qc)
+invisible(dev.off())
+# Showed only one bad sample - 99513 
+
+# Red channel plot
+jpeg(paste("Red Channel.jpg",sep="/"), width=800, height=800)
+boxplot(log(rgset@assays$data$Red+1), main="Red channel", las=2, cex.axi=0.8)
+invisible(dev.off())
+
+# Green channel plot
+jpeg(paste("Green Channel.jpg",sep="/"), width=800, height=800)
+boxplot(log(rgset@assays$data$Green+1), main="Green channel", las=2, cex.axi=0.8)
+invisible(dev.off())
+
+# Unormalised density plot
+jpeg(paste("Unormalised beta density plot_IARC method.jpg",sep="/"), width=800, height=800)
+densityPlot(rawbetas, sampGroups = targets$Sample.Type)
+invisible(dev.off())
+# Shows the two weird samples
+
+# Bean plot
+jpeg(paste("Unormalised Density Bean Plot_IARC method.jpg",sep="/"), width=800, height=800)
+densityBeanPlot(rawbetas, sampGroups = targets$Sample.Type)
+invisible(dev.off())
+
+# Remove two failed samples (99513 (sample 7) and 99567 (sample 24))
+rgset = rgset[,-c(7,24)]
+targets = targets[-c(7,24),]
+rawbetas = rawbetas[,-c(7,24)]
+detp = detp[,-c(7,24)]
+
+# Unormalised density plot with the two weird samples
+jpeg(paste("Unormalised beta density plot_without bad samples_IARC method.jpg",sep="/"), width=800, height=800)
+densityPlot(rawbetas, sampGroups = targets$Sample.Type)
+invisible(dev.off())
+# Two weird samples are gone
+
+# Check sex but don't save file
+mdsPlot(rawbetas, numPositions=1000, sampGroups = targets$Gender)
+
+# Normalize with funnorm
+# Does background and dye bias correction with noob
+rgset.norm <- preprocessFunnorm(rgset, sex=targets$predGender)
+# Used the predicted sex as the actual sex for two samples is incorrect 
+# The output here is a genomic methyl set (the same as the gmset in MCRI however normalisation is FunNorm not SWAN)
+
+# Normalised beta density plot (all probes)
+densityPlot(getBeta(rgset.norm), sampGroups = targets$Sample.Type, main="Normalised beta density plot")
+
+# Create normalised beta table for probe removal
+betas.norm <- getBeta(rgset.norm)
+# Replace values with NA from rawbeta table
+probNAcont<-which(apply(rawbetas,1,function(i) sum(is.na(i)))>0)
+for (i in names(probNAcont)){
+  betas.norm[i,is.na(rawbetas[i,])]<-NA
+}
+# probNAcont found 1,175 probes with at least one NA value - to be removed
+
+# TEST ONLY FOR NUMBERS
+keep.05 = rowSums(detp < 0.05) == ncol(betas.norm) 
+betas.norm.05 = betas.norm[keep.05,]
+# Resulted in 21,266 probes with p-detection value >0.05 - same as MCRI method
+
+# Removed probes that failed in one or more samples with a p-detection value of >0.01
+# Dropped 27,816 probes (485,512 to 457,696) - same as MCRI method
+keep = rowSums(detp < 0.01) == ncol(betas.norm) 
+betas.norm.fl = betas.norm[keep,]
+
+# Create list of probes to remove (cross reactive and sex)
+CR <- read.csv(file="48639-non-specific-probes-Illumina450k.csv", header=T)
+Sex <- read.table(file="Sex_Chr_SNPs.csv", header=T, sep="\t")
+rm_probes <- unique(c(as.vector(CR$TargetID), as.vector(Sex$TargetID)))
+beta <- betas.norm.fl[! rownames(betas.norm.fl) %in% rm_probes,]
+
+# Check dimensions 
+dim(beta)
+# [1] 419883    285
+# Finished with 419,883 probes for 285 samples - same as MCRI method
+
+# Write m table
+m <- beta2m(beta)
+dim(m)
+# [1] 419883    285
+
+# Write tables for analysis
+# Save in MCRI methods folder
+write.table(beta, file="Beta_285_I.csv", sep=",", col.names=NA)
+write.table(m, file="mTable_285_I.csv",sep=",", col.names=NA)
+
+
+
+
+
+
+
+# Post normalisation and probe removal beta density plot
+jpeg(paste("Normalised beta density plot_without bad samples_IARC method.jpg",sep="/"), width=800, height=800)
+densityPlot(betasNew, sampGroups = targets$Sample.Type)
+invisible(dev.off())
+
+# Creation of same sized beta density plots to compare methods
+jpeg(paste("Normalised beta density plot_without bad samples_IARC method_all probes.jpg",sep="/"), width=800, height=800)
+densityPlot(betas, sampGroups = targets$Sample.Type)
+invisible(dev.off())
