@@ -1,0 +1,35 @@
+# Creation of SNP and CH (non CpG methylation) probe lists requires a genomic methyl set or genomic ratio set (gmset) and a rawbeta table with all 485,512 probes
+# Files will work for all HM450K array analyses
+
+# Create file of SNP probes on array with MAF >5% in CpG sites and single base extension sites
+gmset.05 <- dropLociWithSnps(gmset, snps=c("SBE","CpG"), maf=0.05) # 477,909 probes = 7,603 SNP probes
+beta.snp.05 <- getBeta(gmset.05)
+SNP.05 <- rawbetas[!rownames(rawbetas) %in% rownames(beta.snp.05),]
+dim(SNP.05)
+# [1] 7603  XX
+SNP.05 <- merge(SNP.05, ann.450k, by.x="row.names", by.y="row.names")
+SNP.05 <- SNP.05[, c(1, 204:236)] # Modify columns to remove based on number of samples in beta table
+SNP.05 <- data.frame(SNP.05[,-1],row.names=SNP.05[,1])
+write.table(SNP.05, file="HM450K SNP Probes MAF>5%_CpG and SBE.csv", sep=",", col.names=NA)
+
+# Create file of SNP probes on array with MAF >0% in CpG sites and single base extension sites
+gmset.00 <- dropLociWithSnps(gmset, snps=c("SBE","CpG"), maf=0) # 467,971 probes = 17,541
+beta.snp.00 <- getBeta(gmset.00)
+SNP.00 <- rawbetas[!rownames(rawbetas) %in% rownames(beta.snp.00),]
+dim(SNP.00)
+# [1] 17541  XX
+SNP.00 <- merge(SNP.00, ann.450k, by.x="row.names", by.y="row.names")
+SNP.00 <- SNP.00[, c(1, 204:236)] # Modify columns to remove based on number of samples in beta table
+SNP.00 <- data.frame(SNP.00[,-1],row.names=SNP.00[,1])
+write.table(SNP.00, file="HM450K SNP Probes MAF>0%_CpG and SBE.csv", sep=",", col.names=NA)
+
+# Create file of non CpG methylation probes on array 
+gmset.CH <- dropMethylationLoci(gmset, dropCH = TRUE) # 482,421 probes = 3,091 
+beta.CH <- getBeta(gmset.CH)
+CH <- rawbetas[!rownames(rawbetas) %in% rownames(beta.CH),]
+dim(CH)
+# [1] 3091  XX
+CH <- merge(CH, ann.450k, by.x="row.names", by.y="row.names")
+CH <- CH[, c(1, 204:236)] # Modify columns to remove based on number of samples in beta table
+CH <- data.frame(CH[,-1],row.names=CH[,1])
+write.table(CH, file="HM450K CH Probes.csv", sep=",", col.names=NA)
