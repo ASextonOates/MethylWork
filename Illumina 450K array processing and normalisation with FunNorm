@@ -1,0 +1,197 @@
+# Let "Dir" = baseDir and "SampleSheet.csv" = targets file
+
+# Load libraries
+library(limma)
+library(minfi)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+library(IlluminaHumanMethylation450kmanifest)
+library(RColorBrewer)
+library(lumi)
+
+# Set base directory
+baseDir="/Dir" 
+
+# Get annotation file
+ann.450k = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+
+# Read in targets file 
+targets = read.metharray.sheet(baseDir, "SampleSheet.csv")
+
+# Remove unwanted samples from targets file
+# For example in column: Sample.Type, remove all samples labelled "Child"
+targets <- targets[targets$Sample.Type != "Child",]
+
+# Create rgset
+rgset <- read.metharray.exp(targets=targets)
+targets$ID = paste(targets$Sample.Name)
+sampleNames(rgset) = targets$ID
+
+# QC Step 1: Generate p-detection values
+# Label samples by chip number (targets$Slide)
+# Sets line at p=0.01
+jpeg(paste("Detection P-value Plot.jpg",sep="/"), width=800, height=800)
+detp = detectionP(rgset)
+barplot(apply(detp,2,mean),col=as.numeric(factor(targets$Slide)),las=2,cex.names=0.8,ylim=c(0,0.05), main="P-detection plot")
+abline(h=0.01,col="red")
+dev.off()
+  # Make table of means to check which sample/s are pooor quality
+meanDetp <- colMeans(detp)
+meanDetp <- as.matrix(meanDetp, colnames=rownames(targets))
+  # Sort descending
+
+# QC Step 2: Generate QC report
+# Colour samples by case/control status (targets$Sample.Group)
+qcReport(rgset,sampNames=targets$ID,sampGroups=targets$Sample.Group,pdf="QC report.pdf")
+
+# QC Step 3: Generate QC plot (requires an mset)
+mset <- preprocessRaw(rgset)
+qc <- getQC(mset)
+jpeg(paste("QC plot.jpg",sep="/"), width=800, height=800)
+plotQC(qc)
+dev.off()
+  # Shows poor quality sample with index number
+
+# QC Step 4: Generate beta density plots
+  # Density plot (label samples by case/control (targets$Sample.Group))
+jpeg(paste("Unormalised beta density plot.jpg",sep="/"), width=800, height=800)
+densityPlot(rgset, sampGroups = targets$Sample.Group)
+dev.off()
+
+  # Bean plot (label samples by case/control (targets$Sample.Group))
+jpeg(paste("Unormalised Density Bean Plot.jpg",sep="/"), width=800, height=800)
+densityBeanPlot(rgset, sampGroups = targets$Sample.Group)
+dev.off()
+
+# QC Step 5: Generate green and red channel plots
+  # Combined channel plots
+nsamp <- nrow(targets)
+jpeg(paste("Boxplot of red and green colour channels.jpg",sep="/"), width=800, height=800)
+main<- "Boxplots of Red and Green color channels"
+ylab<-"log2 intensity of both methylated and unmethylated probes"
+par(xaxt='n')
+boxplot(log2(rgset@assays$data$Red+1), col = "red", boxwex = 0.25, at= 1:nsamp - 0.175, ylab=ylab, main=main, labels=sampleNames(rgset), cex=0.5)
+boxplot(log2(rgset@assays$data$Green+1), col = "green", boxwex = 0.25, at= 1:nsamp + 0.175, axis=F , add=T, cex=0.5)
+par(xaxt='s')
+axis(1, at=1:nsamp, labels=sampleNames(rgset), tick=TRUE, las=2, cex.axis=0.8)
+dev.off()
+
+  # Red channel plot
+jpeg(paste("Red Channel.jpg",sep="/"), width=800, height=800)
+boxplot(log(rgset@assays$data$Red+1), main="Red channel", las=2, cex.axi=0.8)
+dev.off()
+
+  # Green channel plot
+jpeg(paste("Green Channel.jpg",sep="/"), width=800, height=800)
+boxplot(log(rgset@assays$data$Green+1), main="Green channel", las=2, cex.axi=0.8)
+dev.off()
+
+# Remove poor quality samples (p-detection level set at 0.01)
+keep.samples = apply(detp,2,mean) < 0.01 
+rgset = rgset[,keep.samples]
+targets = targets[keep.samples,]
+detp = detp[,keep.samples]
+  # To check which samples will be removed
+which(keep.samples == FALSE)
+
+# Make new beta density plot without poor quality samples (label samples by case/control (targets$Sample.Group))
+jpeg(paste("Unormalised beta density plot_passed QC.jpg",sep="/"), width=800, height=800)
+densityPlot(rgset, sampGroups = targets$Sample.Group)
+dev.off()
+
+# Make raw beta table for NA replacement later
+rawbetas<-getBeta(rgset)
+dim(rawbetas)
+# [1] 485512    203
+
+# Check sex prediction (required for FunNorm)
+# Plot MDS with expected sex (targets$Sex)
+GMsetEx <- mapToGenome(rgset)
+estSex <- getSex(GMsetEx)
+targets$predGender <- estSex$predictedSex
+mdsPlot(getBeta(rgset), numPositions=1000, sampGroups = targets$Sex)
+
+# Remove sex-incorrect samples where necessary (example sample: Case1)
+  # Find row number to remove from tables
+which(targets$Sample.Name == Case1)
+# [1] 127
+  # Remove sample from all tables
+rawbetas <- rawbetas[,-127]
+rgset <- rgset[, -127]
+targets <- targets[-127,]
+detp <- detp[,-127]
+  # Remake plot to check accurate sex
+mdsPlot(getBeta(rgset), numPositions=1000, sampGroups = targets$Sex)
+
+# Normalize with funnorm
+  # Does background and dye bias correction with noob
+rgset.norm <- preprocessFunnorm(rgset, sex=targets$predGender)
+# Can use predicted sex or expected sex if correct
+# The output here is a genomic methyl set
+
+# Replace imputed values after normalisation with NAs from raw beta table
+# Create normalised beta table for probe removal
+betas.norm <- getBeta(rgset.norm)
+# Replace values with NA from rawbeta table
+probNAcont<-which(apply(rawbetas,1,function(i) sum(is.na(i)))>0)
+for (i in names(probNAcont)){
+  betas.norm[i,is.na(rawbetas[i,])]<-NA
+}
+
+# Check betas.norm for NA values
+betas.norm.na <- betas.norm[!complete.cases(betas.norm),]
+dim (betas.norm.na)
+# Example return: [1] 867 202
+# ie. 867 probes have an NA value included
+
+# Normalised beta density plot (all 485,512 probes)
+# Label samples by case/control (targets$Sample.Group)
+jpeg(paste("Normalised (FunNorm) beta density plot.jpg",sep="/"), width=800, height=800)
+densityPlot(betas.norm, sampGroups = targets$Sample.Group, main="Normalised (FunNorm) beta density plot_all probes")
+dev.off()
+
+# TEST ONLY FOR NUMBERS
+keep.05 = rowSums(detp < 0.05) == ncol(betas.norm) 
+betas.norm.05 = betas.norm[keep.05,]
+dim(betas.norm.05)
+# Example return: [1] 468675    202
+# ie. resulted in 16,837 probes with p-detection value >0.05 
+
+# Removed probes that failed in one or more samples with a p-detection value of >0.01
+keep = rowSums(detp < 0.01) == ncol(betas.norm) 
+betas.norm.fl = betas.norm[keep,]
+dim(betas.norm.fl)
+# Example return: [1] 463686    202
+# ie. dropped 21,826 probes
+
+# Create list of probes to remove (cross reactive and sex)
+# CR file = "48639-non-specific-probes-Illumina450k.csv" from Chen, Yi-an, et al. "Discovery of cross-reactive probes and polymorphic CpGs in the Illumina Infinium HumanMethylation450 microarray." Epigenetics 8.2 (2013): 203-209.
+# Sex probe file = "Sex_Probe_HM450.csv" - see probe list creation scripts for details 
+# Place csv files in working directory
+CR <- read.csv(file="48639-non-specific-probes-Illumina450k.csv", header=T)
+Sex <- read.table(file="Sex_Probe_HM450.csv", header=T, sep="\t")
+rm_probes <- unique(c(as.vector(CR$TargetID), as.vector(Sex$TargetID)))
+beta <- betas.norm.fl[! rownames(betas.norm.fl) %in% rm_probes,]
+dim(beta)
+# Example return: [1] 425433    202
+# ie. finished with 425,433 probes for 202 samples
+
+# Optional inclusion of removing SNP probes
+# To exclude SNP and CH probes 
+# Modify for which files you want (MAF>5%/MAF>0%/CH) - see probe list creation scripts for details
+SNP <- read.csv(file="HM450K SNP Probes MAF>5%_CpG and SBE.csv", stringsAsFactors=FALSE)
+no.SNP = !(rownames(beta) %in% SNP$X)
+beta = beta[no.SNP,]
+
+# Prepare tables
+# CONTAIN SNP PROBES and NAs
+m <- beta2m(beta)
+
+# Write tables for analysis
+write.table(beta, file="Beta_FunNorm_NAs.csv", sep=",", col.names=NA)
+write.table(m, file="m_FunNorm_NAs.csv",sep=",", col.names=NA)
+
+# Make tables without NAs (less 761 probes)
+m2 <- m[complete.cases(m),]
+beta2 <- beta[complete.cases(beta),]
+write.table(beta2, file="Beta_FunNorm.csv", sep=",", col.names=NA)
+write.table(m2, file="m_FunNorm.csv",sep=",", col.names=NA)
