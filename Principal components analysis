@@ -51,3 +51,10 @@ labeledHeatmap(Matrix = t(moduleTraitCor), xLabels = colnames(loadings[,c(1:20)]
 colors=blueWhiteRed(6), textMatrix=t(textMatrix), setStdMargins=FALSE, cex.text=0.7, zlim=c(-1,1), 
 main=paste("PCA-trait relationships"))
 dev.off()
+
+# Boxplots of features of interest (for example chip and chip position)
+png(file="Principal components of interest.png",height=500,width=1000)
+par(mfrow=c(1,2))
+boxplot(PC1~as.factor(targets$Sentrix_Position),data=loadings,main="Boxplots of chip position, PC1")
+boxplot(PC1~as.factor(targets$Sample_ID),data=loadings,main="Boxplots of chip, PC2")
+dev.off()
