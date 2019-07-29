@@ -1,0 +1,53 @@
+# Let targets file = "targets.csv" and m table = "mTable.csv"
+
+targets <- read.csv(file="targets.csv",header=TRUE)
+m <- read.csv(file="mTable.csv",header=TRUE,row=1)
+
+# Check tables to make sure there are no non-finite values
+TestInf <- which(apply(m,1,function(i) sum(is.infinite(i)))>0)
+TestNA <- which(apply(m,1,function(i) sum(is.na(i)))>0)
+TestNaN <- which(apply(m,1,function(i) sum(is.nan(i)))>0)
+
+# Calculate principal component values, save as an object called loadings
+fit <- prcomp(t(m), center=TRUE, scale=TRUE, retx=TRUE)
+loadings = fit$x
+
+# Plots
+# y-axis = variance
+jpeg(paste("PCA plot of 1st 10 principal components.jpg", sep="/"), width=800, height=800)
+plot(fit, type="lines", main="PCA plot of 1st 10 principal components")
+dev.off()
+
+# y-axis = proportion of variance 
+propVarExpl = summary(fit)$importance[2,]
+# To check it's calculated correctly use sum(propVarExpl) should equal 1.0
+jpeg(paste("PCA plot_proportion of variance_SWAN no NAs.jpg",sep="/"),width=800, height=800)
+barplot(propVarExpl[1:10],ylab='Proportion of variance',xlab='PC', ylim=c(0,1))
+dev.off()
+
+# Setup
+library(WGCNA)
+nGenes = nrow(m)
+nSamples = ncol(m)
+
+# Create phenotype data frame
+datTraits = data.frame(individual=as.numeric(targets$ID), chip=as.numeric(targets$Sentrix_ID), 
+position=as.numeric(targets$Sentrix_Position), plate=as.numeric(targets$Sample_Plate), sex=as.numeric(targets$Sex), 
+group=as.numeric(targets$Group), CD8T=as.numeric(targets$CD8T), CD4T=as.numeric(targets$CD4T), 
+NK=as.numeric(targets$NK), Bcell=as.numeric(targets$Bcell), Mono=as.numeric(targets$Mono), Eos=as.numeric(targets$Eos), 
+Neu=as.numeric(targets$Neu))
+
+# Test correlations
+moduleTraitCor = cor(loadings[,c(1:20)], datTraits, use="p")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
+sizeGrWindow(10,6)
+textMatrix = paste(signif(moduleTraitCor, 2), "\n(",signif(moduleTraitPvalue, 1), ")", sep= "")
+dim(textMatrix) = dim(moduleTraitCor)
+par(mar = c(6, 8.5, 3, 3))
+
+# Create plot
+png(file="Heatmap of 20 principal components and various phenotypes_SWAN no NAs.png", height=720, width=720)
+labeledHeatmap(Matrix = t(moduleTraitCor), xLabels = colnames(loadings[,c(1:20)]), yLabels= names(datTraits), colorLabels=FALSE, 
+colors=blueWhiteRed(6), textMatrix=t(textMatrix), setStdMargins=FALSE, cex.text=0.7, zlim=c(-1,1), 
+main=paste("PCA-trait relationships"))
+dev.off()
