@@ -3,6 +3,8 @@
 
 # Libraries
 library(minfi)
+library(IlluminaHumanMethylation450kmanifest)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
 # As required
 library(FlowSorted.Blood.450k)
 library(FlowSorted.DLPFC.450k)
