@@ -1,0 +1,20 @@
+# To detect and replace -Inf values in M tables
+# Arise in data normalised with FunNorm as beta values are created first from the normalised genomic ratio set and can have the value of 0
+# When a beta value of 0 is transformed to an m value (m = log2(beta/1-beta)) it becomes -infinity and cannot be used for further analysis
+
+# Let m = m table
+# Check for -Inf values
+TestInf <- which(apply(m,1,function(i) sum(is.infinite(i)))>0)
+# Returns an integer of 0 or a list of all the probes with a -Inf value
+
+# Replace all -Inf values with the lowest m value found in the m table 
+mNoInf <- m
+mNoInf[!is.finite(mNoInf)]<-min(mNoInf[is.finite(mNoInf)])
+
+# Re-test for Inf values
+TestInf2 <- which(apply(mNoInf,1,function(i) sum(is.infinite(i)))>0)
+TestInf2
+# named integer(0)
+
+# Re-write m table
+write.table(mNoInf, file="mTable_noInf.csv", sep=",", col.names=NA)
