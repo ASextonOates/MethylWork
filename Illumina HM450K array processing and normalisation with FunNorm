@@ -126,7 +126,7 @@ mdsPlot(getBeta(rgset), numPositions=1000, sampGroups = targets$Sex)
   # Does background and dye bias correction with noob
 rgset.norm <- preprocessFunnorm(rgset, sex=targets$predGender)
 # Can use predicted sex or expected sex if correct
-# The output here is a genomic methyl set
+# The output here is a genomic ratio set
 
 # Replace imputed values after normalisation with NAs from raw beta table
 # Create normalised beta table for probe removal
